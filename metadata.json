@@ -1,0 +1,6 @@
+{
+  "name": "DIY Keychain on ESP32-C3 SuperMini",
+  "description": "Firmware and Laincore/Analog-horror Captive Portal web interface for DIY digital keychain with 1.28-inch round ST7789 display",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
