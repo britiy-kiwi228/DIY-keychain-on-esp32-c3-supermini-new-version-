@@ -117,7 +117,7 @@ void display_init(void) {
 }
 
 void display_set_backlight(uint8_t duty) {
-    ledcWrite(BACKLIGHT_LEDC_CH, duty);
+    ledcWrite(BACKLIGHT_LEDC_CH, duty); // Должен быть КАНАЛ (BACKLIGHT_LEDC_CH), а не пин!
 }
 
 void display_sleep(void) {

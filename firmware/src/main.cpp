@@ -18,6 +18,7 @@
 // ============================================================================
 // SYSTEM FSM STATES
 // ============================================================================
+static void set_state_playback();
 enum SystemState {
     STATE_PLAYBACK,
     STATE_PORTAL,
@@ -146,7 +147,7 @@ static void button_update(void) {
 
 void setup() {
     Serial.begin(115200);
-    delay(100);
+    delay(2000);
     Serial.println(F("\n============================================="));
     Serial.println(F("WIRED_KEYCHAIN // ESP32-C3 SUPERMINI (MODULAR)"));
     Serial.println(F("============================================="));
@@ -159,7 +160,7 @@ void setup() {
     display_init();
 
     // 3. Mount LittleFS Flash Filesystem
-    if (!LittleFS.begin(true)) {
+    if (!LittleFS.begin(true, "/littlefs", 10, "littlefs")) {
         Serial.println(F("[FS] LittleFS Mount Failed! Formatted new partition."));
     } else {
         Serial.printf("[FS] LittleFS Mounted: %u / %u KB used\n",
@@ -169,17 +170,14 @@ void setup() {
     }
 
     // 4. Determine Initial Boot State
-    if (battery_is_charging()) {
-        set_state_charging_sleep();
-    } else {
-        set_state_playback();
-    }
+    set_state_playback(); // Принудительно включаем экран
 }
 
 void loop() {
     uint32_t now = millis();
 
     // --- 1. USB VBUS CHARGING DETECTION (Polled every 500ms to eliminate ADC lag during playback) ---
+    /* 
     static uint32_t s_last_charge_check_ms = 0;
     if (now - s_last_charge_check_ms >= 500) {
         s_last_charge_check_ms = now;
@@ -191,6 +189,14 @@ void loop() {
             set_state_playback();
         }
     }
+    */
+    static uint32_t s_last_heartbeat = 0;
+    if (now - s_last_heartbeat >= 1000) {
+        s_last_heartbeat = now;
+        Serial.printf("[HEARTBEAT] Uptime: %lu sec | State: %d | FreeHeap: %u\n", 
+                      now / 1000, (int)s_state, ESP.getFreeHeap());
+    }
+
 
     // --- 2. TACTILE BUTTON DEBOUNCER ---
     button_update();
