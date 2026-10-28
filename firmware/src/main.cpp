@@ -40,22 +40,30 @@ static bool     s_btn_ignore_rel = false;
 // ============================================================================
 
 static void enter_deep_sleep(void) {
-    Serial.println(F("[SYSTEM] Entering Low-Power Sleep. Wakeable via PIN_BUTTON (GPIO 10)..."));
+    Serial.println(F("[SYSTEM] Entering Low-Power Sleep..."));
     display_sleep();
     web_portal_stop();
 
-    // NOTE: On ESP32-C3, only GPIO 0..5 are in the RTC domain for Deep Sleep.
-    // GPIO 10 is in VDD3P3_CPU domain, so standard Deep Sleep would permanently freeze the device.
-    // We use Light Sleep (~130uA draw), which reliably wakes up on GPIO 10 falling edge.
+    // 1. ВАЖНО: Ждем, пока пользователь физически ОТПУСТИТ кнопку после 5-секундного удержания!
+    while (digitalRead(PIN_BUTTON) == LOW) {
+        delay(20);
+    }
+    delay(100); // Антидребезг после отпускания
+
+    Serial.println(F("[SYSTEM] Button released. Going to sleep NOW. Wake on click."));
+    Serial.flush();
+
+    // 2. Теперь безопасно засыпаем — плата проснется только от следующего нового нажатия!
     gpio_wakeup_enable((gpio_num_t)PIN_BUTTON, GPIO_INTR_LOW_LEVEL);
     esp_sleep_enable_gpio_wakeup();
     esp_light_sleep_start();
 
-    // Resumed from sleep: wait for button release
+    // 3. Проснулись от нового клика: ждем пока отпустишь
     while (digitalRead(PIN_BUTTON) == LOW) {
         delay(20);
     }
-    delay(50);
+    delay(100);
+
     display_wake();
     set_state_playback();
 }
