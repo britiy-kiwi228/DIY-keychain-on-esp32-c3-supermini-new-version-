@@ -18,28 +18,31 @@ static uint8_t*  s_p_active_slot = nullptr;
 // ============================================================================
 
 static void handle_root() {
-    if (LittleFS.exists("/index.html.gz")) {
-        File f = LittleFS.open("/index.html.gz", "r");
-        s_server.sendHeader("Content-Encoding", "gzip");
-        s_server.streamFile(f, "text/html");
-        f.close();
-        return;
-    } else if (LittleFS.exists("/index.html")) {
+    Serial.println(F("[HTTP] >>> CLIENT CONNECTED TO ROOT / <<<"));
+
+    // 1. Отдаем чистый index.html
+    if (LittleFS.exists("/index.html")) {
         File f = LittleFS.open("/index.html", "r");
+        size_t sz = f.size();
+        Serial.printf("[HTTP] Serving /index.html (Size: %u bytes)\n", (unsigned int)sz);
         s_server.streamFile(f, "text/html");
         f.close();
         return;
     }
 
-    // Fallback emergency upload form if LittleFS image is missing
-    String html = F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                    "<title>WIRED KEYCHAIN // EMERGENCY</title><style>body{background:#0b0f17;color:#00f0ff;font-family:monospace;padding:20px;text-align:center}"
-                    "input,button{background:#111;color:#fff;border:1px solid #00f0ff;padding:12px;margin:10px auto;display:block;width:90%}</style></head>"
-                    "<body><h2>WIRED KEYCHAIN // UPLOADER</h2>"
-                    "<form method='POST' action='/api/upload?slot=1' enctype='multipart/form-data'>"
-                    "<input type='file' name='data' accept='.gif'>"
-                    "<button type='submit'>INJECT TO SLOT 1</button></form></body></html>");
-    s_server.send(200, "text/html", html);
+    // 2. Если обычного нет, пробуем .gz
+    if (LittleFS.exists("/index.html.gz")) {
+        File f = LittleFS.open("/index.html.gz", "r");
+        size_t sz = f.size();
+        Serial.printf("[HTTP] Serving /index.html.gz (Size: %u bytes)\n", (unsigned int)sz);
+        s_server.sendHeader("Content-Encoding", "gzip");
+        s_server.streamFile(f, "text/html");
+        f.close();
+        return;
+    }
+
+    Serial.println(F("[HTTP] ERROR: Files not found in LittleFS!"));
+    s_server.send(200, "text/html", "<h1>ESP32 ALIVE BUT NO HTML FILE</h1>");
 }
 
 static void handle_captive_redirect() {
@@ -147,6 +150,51 @@ static void handle_file_upload() {
     }
 }
 
+// 1. Определение типа файла
+static String get_content_type(const String& path) {
+    if (path.endsWith(".html")) return "text/html";
+    else if (path.endsWith(".css")) return "text/css";
+    else if (path.endsWith(".js")) return "application/javascript";
+    else if (path.endsWith(".json")) return "application/json";
+    else if (path.endsWith(".png")) return "image/png";
+    else if (path.endsWith(".gif")) return "image/gif";
+    else if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+    else if (path.endsWith(".ico")) return "image/x-icon";
+    else if (path.endsWith(".svg")) return "image/svg+xml";
+    return "text/plain";
+}
+
+// 2. Раздача файлов из LittleFS и перенаправление
+static void handle_not_found() {
+    String uri = s_server.uri();
+    Serial.printf("[HTTP] Request: %s\n", uri.c_str());
+
+    // Ищем файл на LittleFS (например /presets/lain_angel.jpg)
+    if (LittleFS.exists(uri)) {
+        File f = LittleFS.open(uri, "r");
+        s_server.streamFile(f, get_content_type(uri));
+        f.close();
+        return;
+    }
+
+    // Ищем файл .gz
+    if (LittleFS.exists(uri + ".gz")) {
+        File f = LittleFS.open(uri + ".gz", "r");
+        s_server.sendHeader("Content-Encoding", "gzip");
+        s_server.streamFile(f, get_content_type(uri));
+        f.close();
+        return;
+    }
+
+    // Проверочные запросы смартфонов
+    if (uri.indexOf("generate_204") >= 0 || uri.indexOf("hotspot") >= 0 || 
+        uri.indexOf("canonical") >= 0 || uri.indexOf("connecttest") >= 0) {
+        handle_captive_redirect();
+        return;
+    }
+
+    s_server.send(404, "text/plain", "File Not Found");
+}
 // ============================================================================
 // LIFECYCLE ROUTINES
 // ============================================================================
@@ -154,22 +202,31 @@ static void handle_file_upload() {
 void web_portal_start(uint8_t *p_active_slot) {
     s_p_active_slot = p_active_slot;
 
-    // 1. Boost CPU to 160MHz for networking
+    // 1. Повышаем частоту CPU и даем генератору 50 мс на стабилизацию
     setCpuFrequencyMhz(160);
+    delay(50);
 
-    // 2. Start SoftAP
+    // 2. Будим радиочип и настраиваем SoftAP
+    WiFi.disconnect(true);
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, AP_PASS);
-    delay(20);
+    esp_wifi_start(); // Обязательно после esp_wifi_stop!
 
-    // 3. Start Captive DNS on port 53 (redirect all queries to 192.168.4.1)
+    // Ограничиваем мощность TX для C3 SuperMini (иначе сеть "глушится" из-за питания)
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+
+    // Запускаем сеть на 1-м канале, скрытый=false, макс. клиентов=4
+    bool ap_ok = WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 4);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    delay(100);
+
+    // 3. Запуск Captive DNS
     s_dns.setErrorReplyCode(DNSReplyCode::NoError);
     s_dns.start(DNS_PORT, "*", WiFi.softAPIP());
 
-    // 4. Setup WebServer Endpoints
+    // 4. Эндпоинты сервера
     s_server.on("/", HTTP_GET, handle_root);
-    s_server.on("/hotspot-detect.html", HTTP_GET, handle_captive_redirect); // Apple Captive
-    s_server.on("/generate_204", HTTP_GET, handle_captive_redirect);       // Android Captive
+    s_server.on("/hotspot-detect.html", HTTP_GET, handle_captive_redirect);
+    s_server.on("/generate_204", HTTP_GET, handle_captive_redirect);
     s_server.on("/canonical.html", HTTP_GET, handle_captive_redirect);
 
     s_server.on("/api/status", HTTP_GET, handle_api_status);
@@ -185,9 +242,14 @@ void web_portal_start(uint8_t *p_active_slot) {
         s_server.sendHeader("Access-Control-Allow-Origin", "*");
         s_server.send(200, "application/json", "{\"status\":\"success\"}");
     }, handle_file_upload);
-
+    s_server.onNotFound(handle_not_found);
     s_server.begin();
-    Serial.printf("[WEB] Portal live: SSID=%s, IP=%s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+
+    
+    Serial.printf("[WEB] Portal live: Status=%s, SSID=%s, IP=%s\n",
+                  ap_ok ? "OK" : "FAIL",
+                  AP_SSID, 
+                  WiFi.softAPIP().toString().c_str());
 }
 
 void web_portal_stop(void) {
@@ -197,7 +259,7 @@ void web_portal_stop(void) {
     WiFi.mode(WIFI_OFF);
     esp_wifi_stop();
 
-    // Throttle CPU back to 80MHz to save battery
+    // Снижаем частоту до 80 МГц для экономии батареи
     setCpuFrequencyMhz(80);
     Serial.println(F("[WEB] Portal shut down. Wi-Fi powered OFF."));
 }
