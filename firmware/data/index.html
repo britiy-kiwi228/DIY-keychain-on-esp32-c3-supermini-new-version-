@@ -1608,7 +1608,94 @@
         themeIcon.textContent = isDark ? '⚫' : '⚪';
       });
 
-      // Старт
+      async function syncSlotsFromESP32() {
+        logToTerminal('СИНХРОНИЗАЦИЯ СЛОТОВ ИЗ ПАМЯТИ...', 'cyan');
+
+        // 1. Узнаем у платы, какой слот сейчас активен
+        try {
+          const statusRes = await fetch('/api/status');
+          if (statusRes.ok) {
+            const data = await statusRes.json();
+            if (data.slot && data.slot >= 1 && data.slot <= 3) {
+              state.activeSlotIndex = data.slot - 1;
+              document.querySelectorAll('.slot-card').forEach((c, i) => {
+                c.classList.toggle('active', i === state.activeSlotIndex);
+              });
+            }
+          }
+        } catch (e) {}
+
+        // 2. Проверяем файлы для каждого из 3 слотов
+        for (let i = 0; i < 3; i++) {
+          const slotNum = i + 1;
+
+          // Проверяем наличие GIF
+          try {
+            const gifRes = await fetch(`/slot${slotNum}.gif`, { method: 'HEAD' });
+            if (gifRes.ok) {
+              state.slots[i].isGif = true;
+              state.slots[i].gifUrl = `/slot${slotNum}.gif?t=${Date.now()}`;
+              const img = new Image();
+              img.onload = () => {
+                state.slots[i].img = img;
+                updateThumbnail(i);
+                if (state.activeSlotIndex === i) renderDisplay();
+              };
+              img.src = state.slots[i].gifUrl;
+              logToTerminal(`СЛОТ 0${slotNum}: НАЙДЕН GIF`, 'success');
+              continue;
+            }
+          } catch (e) {}
+
+          // Проверяем наличие статичной картинки .BIN (RGB565)
+          try {
+            const binRes = await fetch(`/slot${slotNum}.bin`);
+            if (binRes.ok) {
+              const buf = await binRes.arrayBuffer();
+              if (buf.byteLength === 115200) {
+                const u8 = new Uint8Array(buf);
+                const c = document.createElement('canvas');
+                c.width = 240; c.height = 240;
+                const ctx = c.getContext('2d');
+                const id = ctx.createImageData(240, 240);
+                let p = 0, b = 0;
+                for (let px = 0; px < 57600; px++) {
+                  const hi = u8[b++];
+                  const lo = u8[b++];
+                  const r = (hi & 0xF8);
+                  const g = ((hi & 0x07) << 5) | ((lo & 0xE0) >> 3);
+                  const bl = (lo & 0x1F) << 3;
+                  id.data[p++] = r | (r >> 5);
+                  id.data[p++] = g | (g >> 6);
+                  id.data[p++] = bl | (bl >> 5);
+                  id.data[p++] = 255;
+                }
+                ctx.putImageData(id, 0, 0);
+
+                const img = new Image();
+                img.onload = () => {
+                  state.slots[i].img = img;
+                  state.slots[i].isGif = false;
+                  updateThumbnail(i);
+                  if (state.activeSlotIndex === i) renderDisplay();
+                };
+                img.src = c.toDataURL();
+                logToTerminal(`СЛОТ 0${slotNum}: НАЙДЕНА КАРТИНКА`, 'success');
+                continue;
+              }
+            }
+          } catch (e) {}
+
+          // Если файлов нет — слот пустой
+          state.slots[i].img = null;
+          state.slots[i].isGif = false;
+          updateThumbnail(i);
+        }
+
+        renderDisplay();
+      }
+
+      // Старт системы
       window.addEventListener('DOMContentLoaded', () => {
         logToTerminal('WIRED_KEYCHAIN OS СИСТЕМА ГОТОВА', 'crimson');
         logToTerminal('ДИСПЛЕЙ: GC9A01 240x240 ROUND', 'info');
@@ -1620,6 +1707,7 @@
           logToTerminal('КОДЕКИ ДЕКОДЕР + GIFSHOT: АКТИВНЫ', 'success');
         }
         renderDisplay();
+        syncSlotsFromESP32();
       });
     })();
   </script>
