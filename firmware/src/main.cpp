@@ -44,21 +44,17 @@ static void enter_deep_sleep(void) {
     display_sleep();
     web_portal_stop();
 
-    // 1. ВАЖНО: Ждем, пока пользователь физически ОТПУСТИТ кнопку после 5-секундного удержания!
+    // Ждем, пока пользователь уберет палец с кнопки!
     while (digitalRead(PIN_BUTTON) == LOW) {
         delay(20);
     }
-    delay(100); // Антидребезг после отпускания
+    delay(100);
 
-    Serial.println(F("[SYSTEM] Button released. Going to sleep NOW. Wake on click."));
-    Serial.flush();
-
-    // 2. Теперь безопасно засыпаем — плата проснется только от следующего нового нажатия!
     gpio_wakeup_enable((gpio_num_t)PIN_BUTTON, GPIO_INTR_LOW_LEVEL);
     esp_sleep_enable_gpio_wakeup();
     esp_light_sleep_start();
 
-    // 3. Проснулись от нового клика: ждем пока отпустишь
+    // Проснулись: ждем пока отпустишь кнопку
     while (digitalRead(PIN_BUTTON) == LOW) {
         delay(20);
     }
@@ -106,43 +102,52 @@ static void button_update(void) {
     uint32_t now = millis();
 
     if (raw_pressed && !s_btn_is_pressed) {
-        // Press initiated
+        // Нажали на кнопку: фиксируем время начала
         s_btn_is_pressed = true;
         s_btn_press_ms   = now;
         s_btn_ignore_rel = false;
-    } else if (raw_pressed && s_btn_is_pressed) {
+    } 
+    else if (raw_pressed && s_btn_is_pressed) {
         uint32_t duration = now - s_btn_press_ms;
 
-        // Extra-Long Press (> 5.0s): Deep Sleep
+        // СВЕРХДОЛГОЕ ЗАЖАТИЕ (> 5.0 сек): Уходим в сон
         if (duration >= BTN_DEEP_SLEEP_MS && !s_btn_ignore_rel) {
             s_btn_ignore_rel = true;
             enter_deep_sleep();
         }
-    } else if (!raw_pressed && s_btn_is_pressed) {
-        // Release detected
+    } 
+    else if (!raw_pressed && s_btn_is_pressed) {
+        // Отпустили кнопку: считаем длительность нажатия
         uint32_t duration = now - s_btn_press_ms;
         s_btn_is_pressed  = false;
 
+        // Если это было удержание > 5 сек, игнорируем отпускание
         if (s_btn_ignore_rel) {
             return;
         }
 
-        if (duration >= BTN_DEBOUNCE_MS && duration < BTN_SHORT_PRESS_MS) {
-            // SHORT CLICK (< 0.5s)
+        // 1. КОРОТКИЙ КЛИК (от 30 мс до 2.5 сек)
+        if (duration >= BTN_DEBOUNCE_MS && duration < BTN_LONG_PRESS_MS) {
             if (s_state == STATE_PLAYBACK) {
-                // Cycle active playback slot: 1 -> 2 -> 3 -> 1
+                // Переключаем активный слот: 1 -> 2 -> 3 -> 1
                 s_active_slot = (s_active_slot % TOTAL_SLOTS) + 1;
                 Serial.printf("[BUTTON] Switch slot -> %u\n", s_active_slot);
                 display_open_slot(s_active_slot);
-            } else if (s_state == STATE_PORTAL) {
-                // Refresh single unified QR code
-                display_show_qr(QR_MODE_WIFI);
+            } 
+            else if (s_state == STATE_PORTAL) {
+                // В режиме Wi-Fi переключаем QR-код: Wi-Fi <-> Ссылка на сайт
+                s_qr_mode = (s_qr_mode == QR_MODE_WIFI) ? QR_MODE_URL : QR_MODE_WIFI;
+                display_show_qr(s_qr_mode);
             }
-        } else if (duration >= BTN_LONG_PRESS_MS && duration < BTN_DEEP_SLEEP_MS) {
-            // LONG PRESS (2.5s - 5.0s)
+        } 
+        // 2. ДОЛГОЕ ЗАЖАТИЕ (от 2.5 сек до 5.0 сек)
+        else if (duration >= BTN_LONG_PRESS_MS && duration < BTN_DEEP_SLEEP_MS) {
             if (s_state == STATE_PLAYBACK) {
+                // Вход в режим Wi-Fi портала
                 set_state_portal();
-            } else if (s_state == STATE_PORTAL) {
+            } 
+            else if (s_state == STATE_PORTAL) {
+                // Выход обратно к просмотру картинок
                 set_state_playback();
             }
         }
@@ -155,7 +160,8 @@ static void button_update(void) {
 
 void setup() {
     Serial.begin(115200);
-    delay(2000);
+    Serial.setTxTimeoutMs(0); // КРИТИЧНО: чтобы плата не висла без открытого монитора порта
+    delay(700);
     Serial.println(F("\n============================================="));
     Serial.println(F("WIRED_KEYCHAIN // ESP32-C3 SUPERMINI (MODULAR)"));
     Serial.println(F("============================================="));
@@ -198,12 +204,12 @@ void loop() {
         }
     }
     */
-    static uint32_t s_last_heartbeat = 0;
+    /*static uint32_t s_last_heartbeat = 0;
     if (now - s_last_heartbeat >= 1000) {
         s_last_heartbeat = now;
         Serial.printf("[HEARTBEAT] Uptime: %lu sec | State: %d | FreeHeap: %u\n", 
                       now / 1000, (int)s_state, ESP.getFreeHeap());
-    }
+    }*/
 
 
     // --- 2. TACTILE BUTTON DEBOUNCER ---

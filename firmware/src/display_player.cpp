@@ -26,6 +26,9 @@ static uint8_t  s_current_slot = 1;
 // ============================================================================
 
 static void* GIF_open(const char *filename, int32_t *pFileSize) {
+    if (s_gifFile) {
+        s_gifFile.close();
+    }
     s_gifFile = LittleFS.open(filename, "r");
     if (!s_gifFile || s_gifFile.isDirectory()) {
         return NULL;
@@ -56,7 +59,7 @@ static int32_t GIF_seek(GIFFILE *pFile, int32_t iPosition) {
 
 /**
  * Line draw callback: reads palette indices, builds single scanline in s_lineBuffer,
- * and pushes directly to ST7789 display window via SPI.
+ * and pushes directly to GC9A01/ST7789 display window via SPI.
  */
 static void GIF_draw(GIFDRAW *pDraw) {
     uint8_t *s = pDraw->pPixels;
@@ -108,7 +111,7 @@ void display_init(void) {
     ledcAttachPin(TFT_BLK, BACKLIGHT_LEDC_CH);
     display_set_backlight(BACKLIGHT_DUTY_OFF);
 
-    // 2. Initialize ST7789 SPI Display
+    // 2. Initialize GC9A01 SPI Display
     s_tft.init();
     s_tft.setRotation(0);
     s_tft.fillScreen(TFT_BLACK);
@@ -117,17 +120,26 @@ void display_init(void) {
 }
 
 void display_set_backlight(uint8_t duty) {
-    ledcWrite(BACKLIGHT_LEDC_CH, duty); // Должен быть КАНАЛ (BACKLIGHT_LEDC_CH), а не пин!
+    ledcWrite(BACKLIGHT_LEDC_CH, duty);
 }
 
 void display_sleep(void) {
+    // Закрываем любые открытые файлы GIF, чтобы освободить дескрипторы для LittleFS
+    if (s_is_gif_open) {
+        s_gif.close();
+        s_is_gif_open = false;
+    }
+    if (s_gifFile) {
+        s_gifFile.close();
+    }
+
     display_set_backlight(BACKLIGHT_DUTY_OFF);
-    s_tft.writecommand(0x10); // ST7789 command: SLPIN
+    s_tft.writecommand(0x10); // SLPIN (Sleep In)
     delay(10);
 }
 
 void display_wake(void) {
-    s_tft.writecommand(0x11); // ST7789 command: SLPOUT
+    s_tft.writecommand(0x11); // SLPOUT (Sleep Out)
     delay(120);
     display_set_backlight(BACKLIGHT_DUTY_PLAYBACK);
 }
@@ -149,20 +161,22 @@ void display_show_placeholder(uint8_t slot) {
     s_tft.drawString(buf, 120, 95, 4);
 
     s_tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    s_tft.drawString("HOLD BUTTON 3s", 120, 130, 2);
-    s_tft.drawString("FOR WEB PORTAL", 120, 150, 2);
+    s_tft.drawString("HOLD 3s -> WIFI", 120, 130, 2);
 
     uint16_t mv = battery_get_mv();
     uint8_t  pct = battery_get_percentage();
     snprintf(buf, sizeof(buf), "BAT: %d.%02dV (%d%%)", mv / 1000, (mv % 1000) / 10, pct);
     s_tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    s_tft.drawString(buf, 120, 185, 2);
+    s_tft.drawString(buf, 120, 165, 2);
 }
 
 void display_open_slot(uint8_t slot) {
     if (s_is_gif_open) {
         s_gif.close();
         s_is_gif_open = false;
+    }
+    if (s_gifFile) {
+        s_gifFile.close();
     }
 
     s_current_slot = slot;
@@ -210,11 +224,9 @@ void display_update_playback(void) {
         if (res == 1) {
             s_next_frame_ms = now + frame_delay_ms;
         } else if (res == 0) {
-            // Loop reached end: rewind to start
             s_gif.reset();
             s_next_frame_ms = now;
         } else {
-            // Error occurred
             s_gif.close();
             s_is_gif_open = false;
             display_show_placeholder(s_current_slot);
@@ -223,26 +235,25 @@ void display_update_playback(void) {
 }
 
 // ============================================================================
-// QR CODE RENDERING (DUAL QR CAPTIVE VIEWS)
+// QR CODE RENDERING (OPTIMIZED FOR 1.28" ROUND 240x240 DISPLAY)
 // ============================================================================
 
-static void render_qr_canvas(const char *payload, const char *title, const char *subtitle) {
+static void render_qr_canvas(const char *payload, const char *title, const char *subtitle, const char *hint) {
     s_tft.fillScreen(TFT_BLACK);
 
     QRCode qrcode;
     uint8_t qrcodeData[qrcode_getBufferSize(3)];
-    // Version 3 (29x29 modules), ECC Level Low
     qrcode_initText(&qrcode, qrcodeData, 3, 0, payload);
 
-    const int scale = 4; // 29 * 4 = 116px (fits centered in 240x240 screen)
+    const int scale = 4; // 29 * 4 = 116px
     const int qrSize = qrcode.size * scale;
     const int startX = (240 - qrSize) / 2;
-    const int startY = (240 - qrSize) / 2 - 4;
+    const int startY = (240 - qrSize) / 2 - 2;
 
-    // White quiet border
-    s_tft.fillRect(startX - 6, startY - 6, qrSize + 12, qrSize + 12, TFT_WHITE);
+    // Белая рамка вокруг QR (нужна для надежного распознавания камерой)
+    s_tft.fillRect(startX - 4, startY - 4, qrSize + 8, qrSize + 8, TFT_WHITE);
 
-    // Draw QR pixels
+    // Отрисовка модулей QR
     for (uint8_t y = 0; y < qrcode.size; y++) {
         for (uint8_t x = 0; x < qrcode.size; x++) {
             if (qrcode_getModule(&qrcode, x, y)) {
@@ -251,30 +262,38 @@ static void render_qr_canvas(const char *payload, const char *title, const char 
         }
     }
 
-    // Header label
+    // Верхний заголовок (по центру, точно вписывается в круг)
     s_tft.setTextDatum(TC_DATUM);
     s_tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    s_tft.drawString(title, 120, 16, 2);
+    s_tft.drawString(title, 120, 22, 2);
 
-    // Footer label
+    // Нижняя подпись
     s_tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    s_tft.drawString(subtitle, 120, 204, 2);
+    s_tft.drawString(subtitle, 120, 190, 2);
 
-    // Navigation sub-caption
+    // Подсказка по переключению
     s_tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    s_tft.drawString("[HOLD: EXIT TO GIF]", 120, 222, 1);
+    s_tft.drawString(hint, 120, 212, 1);
 }
 
 void display_show_qr(QrViewMode mode) {
-    (void)mode;
     if (s_is_gif_open) {
         s_gif.close();
         s_is_gif_open = false;
     }
+    if (s_gifFile) {
+        s_gifFile.close();
+    }
 
     display_set_backlight(BACKLIGHT_DUTY_PORTAL);
 
-    // Single unified QR: Phone scans, connects to Wi-Fi, and Captive Portal pops up web interface automatically!
-    const char *wifiPayload = "WIFI:S:" AP_SSID ";T:WPA;P:" AP_PASS ";;";
-    render_qr_canvas(wifiPayload, "WIRED KEYCHAIN", "192.168.4.1 AUTO-PORTAL");
+    if (mode == QR_MODE_WIFI) {
+        // QR №1: Подключение к Wi-Fi сети
+        const char *wifiPayload = "WIFI:S:" AP_SSID ";T:WPA;P:" AP_PASS ";;";
+        render_qr_canvas(wifiPayload, "1. CONNECT WI-FI", AP_SSID, "CLICK: OPEN SITE QR");
+    } else {
+        // QR №2: Прямая ссылка для открытия в Safari/Chrome
+        const char *urlPayload = "http://" AP_IP_STR "/";
+        render_qr_canvas(urlPayload, "2. OPEN BROWSER", AP_IP_STR, "CLICK: WI-FI QR");
+    }
 }
