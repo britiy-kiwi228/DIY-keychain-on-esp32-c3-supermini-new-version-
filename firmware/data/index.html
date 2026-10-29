@@ -9,7 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
-  
+  <script src="/omggif.min.js"></script>
+  <script src="/gifshot.min.js"></script>
   <style>
     /* ==========================================================================
        LAINCORE / CLINICAL HORROR / DEREALIZATION PALETTE
@@ -1024,85 +1025,20 @@
 
   </main>
 
-  <!-- ==========================================================================
-       ВСТРОЕННЫЙ СКРИПТ (ЧИСТЫЙ VANILLA JS — ВЕС ВСЕЙ СТРАНИЦЫ ~13 КБ В GZIP)
-       ========================================================================== -->
+  
   <script>
     (function() {
       'use strict';
 
       /* ------------------------------------------------------------------------
-         Переключение тем оформления
-         ------------------------------------------------------------------------ */
-      const btnThemeToggle = document.getElementById('btnThemeToggle');
-      const themeIcon = document.getElementById('themeIcon');
-      const metaThemeColor = document.getElementById('metaThemeColor');
-
-      function applyTheme(isDark) {
-        if (isDark) {
-          document.body.classList.add('theme-dark');
-          document.body.classList.remove('theme-light');
-          themeIcon.textContent = '⚫';
-          if (metaThemeColor) metaThemeColor.content = '#06080c';
-        } else {
-          document.body.classList.remove('theme-dark');
-          document.body.classList.add('theme-light');
-          themeIcon.textContent = '⚪';
-          if (metaThemeColor) metaThemeColor.content = '#e4e8ef';
-        }
-      }
-
-      btnThemeToggle.addEventListener('click', () => {
-        const isCurrentlyDark = document.body.classList.contains('theme-dark');
-        applyTheme(!isCurrentlyDark);
-        logToTerminal(`THEME: ${!isCurrentlyDark ? 'DARK_TERMINAL' : 'LIGHT_DEREALIZATION'}`, 'cyan');
-      });
-
-      /* ------------------------------------------------------------------------
-         Состояние приложения
+         1. СОСТОЯНИЕ ПРИЛОЖЕНИЯ
          ------------------------------------------------------------------------ */
       const state = {
         activeSlotIndex: 0,
         slots: [
-          {
-            name: 'SLOT_01',
-            status: 'ACTIVE',
-            addr: '0x00100000',
-            img: null,
-            filter: 'rgb565',
-            zoom: 1.0,
-            panX: 0,
-            panY: 0,
-            brightness: 100,
-            contrast: 100,
-            ditherLevel: 1
-          },
-          {
-            name: 'SLOT_02',
-            status: 'MEMORY',
-            addr: '0x00120000',
-            img: null,
-            filter: 'cyan',
-            zoom: 1.0,
-            panX: 0,
-            panY: 0,
-            brightness: 100,
-            contrast: 110,
-            ditherLevel: 1
-          },
-          {
-            name: 'SLOT_03',
-            status: 'EMPTY',
-            addr: '0x00140000',
-            img: null,
-            filter: 'rgb565',
-            zoom: 1.0,
-            panX: 0,
-            panY: 0,
-            brightness: 100,
-            contrast: 100,
-            ditherLevel: 1
-          }
+          { name: 'SLOT_01', addr: '0x00100000', img: null, isGif: false, gifBlob: null, gifUrl: null, filter: 'rgb565', zoom: 1.0, panX: 0, panY: 0, brightness: 100, contrast: 100, ditherLevel: 1 },
+          { name: 'SLOT_02', addr: '0x00120000', img: null, isGif: false, gifBlob: null, gifUrl: null, filter: 'cyan', zoom: 1.0, panX: 0, panY: 0, brightness: 100, contrast: 110, ditherLevel: 1 },
+          { name: 'SLOT_03', addr: '0x00140000', img: null, isGif: false, gifBlob: null, gifUrl: null, filter: 'rgb565', zoom: 1.0, panX: 0, panY: 0, brightness: 100, contrast: 100, ditherLevel: 1 }
         ],
         isTransmitting: false,
         crtScanlines: true,
@@ -1110,15 +1046,22 @@
       };
 
       /* ------------------------------------------------------------------------
-         DOM Elements
+         2. DOM ЭЛЕМЕНТЫ
          ------------------------------------------------------------------------ */
+      const btnThemeToggle = document.getElementById('btnThemeToggle');
+      const themeIcon = document.getElementById('themeIcon');
+      const metaThemeColor = document.getElementById('metaThemeColor');
+
       const displayCanvas = document.getElementById('displayCanvas');
       const displayCtx = displayCanvas.getContext('2d', { willReadFrequently: true });
+      const animatedGifView = document.getElementById('animatedGifView');
       const roundBezel = document.getElementById('roundBezel');
       const roundScreenGlass = document.getElementById('roundScreenGlass');
       const screenScanlines = document.getElementById('screenScanlines');
       const roundHud = document.getElementById('roundHud');
-      
+      const screenBadgeText = document.getElementById('screenBadgeText');
+      const panCoordsText = document.getElementById('panCoordsText');
+
       const fileInput = document.getElementById('fileInput');
       const uploadBtn = document.getElementById('uploadBtn');
       const zoomSlider = document.getElementById('zoomSlider');
@@ -1129,7 +1072,6 @@
       const contrastValText = document.getElementById('contrastValText');
       const ditherSlider = document.getElementById('ditherSlider');
       const ditherValText = document.getElementById('ditherValText');
-      const panCoordsText = document.getElementById('panCoordsText');
 
       const btnTransmit = document.getElementById('btnTransmit');
       const btnDownloadBin = document.getElementById('btnDownloadBin');
@@ -1138,220 +1080,28 @@
       const btnToggleCrt = document.getElementById('btnToggleCrt');
       const btnToggleHud = document.getElementById('btnToggleHud');
       const connStatusBtn = document.getElementById('connStatusBtn');
-
       const bufferPercent = document.getElementById('bufferPercent');
       const bufferBytes = document.getElementById('bufferBytes');
       const terminalLogs = document.getElementById('terminalLogs');
 
       /* ------------------------------------------------------------------------
-         Системный логгер (на английском языке для отладки)
+         3. ТЕРМИНАЛЬНЫЙ ЛОГГЕР
          ------------------------------------------------------------------------ */
       function logToTerminal(msg, type = 'info') {
         const d = new Date();
         const timeStr = `${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
-        
         const row = document.createElement('div');
         row.className = 'log-line';
-        
-        const timeSpan = document.createElement('span');
-        timeSpan.className = 'log-time';
-        timeSpan.textContent = `[${timeStr}]`;
-        
-        const msgSpan = document.createElement('span');
-        msgSpan.className = `log-msg ${type}`;
-        msgSpan.textContent = `> ${msg}`;
-        
-        row.appendChild(timeSpan);
-        row.appendChild(msgSpan);
+        row.innerHTML = `<span class="log-time">[${timeStr}]</span><span class="log-msg ${type}">> ${msg}</span>`;
         terminalLogs.appendChild(row);
-
-        while (terminalLogs.children.length > 25) {
-          terminalLogs.removeChild(terminalLogs.firstChild);
-        }
+        while (terminalLogs.children.length > 25) terminalLogs.removeChild(terminalLogs.firstChild);
         terminalLogs.scrollTop = terminalLogs.scrollHeight;
       }
 
       /* ------------------------------------------------------------------------
-         Автономный процедурный генератор Laincore графики
+         4. ЦВЕТОКОРРЕКЦИЯ И ФИЛЬТРЫ
          ------------------------------------------------------------------------ */
-      function createProceduralLainGraphic(type) {
-        const c = document.createElement('canvas');
-        c.width = 240;
-        c.height = 240;
-        const ctx = c.getContext('2d');
-
-        ctx.fillStyle = '#06080e';
-        ctx.fillRect(0, 0, 240, 240);
-
-        ctx.strokeStyle = '#0e1824';
-        ctx.lineWidth = 1;
-        for (let x = 0; x <= 240; x += 16) {
-          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 240); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(0, x); ctx.lineTo(240, x); ctx.stroke();
-        }
-
-        if (type === 'ocular') {
-          ctx.strokeStyle = '#00aa55';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(120, 120, 90, 0, Math.PI * 2);
-          ctx.stroke();
-
-          ctx.fillStyle = '#141c26';
-          ctx.fillRect(80, 80, 80, 80);
-          ctx.strokeStyle = '#2a425f';
-          ctx.strokeRect(80, 80, 80, 80);
-
-          ctx.beginPath();
-          ctx.ellipse(120, 120, 26, 15, 0, 0, Math.PI * 2);
-          ctx.fillStyle = '#0a1017';
-          ctx.fill();
-          ctx.strokeStyle = '#00f0ff';
-          ctx.stroke();
-
-          ctx.beginPath();
-          ctx.arc(120, 120, 7, 0, Math.PI * 2);
-          ctx.fillStyle = '#d00036';
-          ctx.fill();
-        } else {
-          ctx.strokeStyle = '#d00036';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.ellipse(120, 50, 42, 11, 0, 0, Math.PI * 2);
-          ctx.stroke();
-
-          ctx.fillStyle = '#101724';
-          ctx.beginPath();
-          ctx.arc(120, 95, 24, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = '#324863';
-          ctx.stroke();
-
-          const grad = ctx.createLinearGradient(40, 160, 200, 160);
-          grad.addColorStop(0, '#00f0ff');
-          grad.addColorStop(0.5, '#d00036');
-          grad.addColorStop(1, '#6b21a8');
-          ctx.strokeStyle = grad;
-          ctx.lineWidth = 2;
-          for (let r = 0; r < 6; r++) {
-            ctx.beginPath();
-            ctx.moveTo(60, 145 + r * 8);
-            ctx.lineTo(180, 145 + r * 8);
-            ctx.stroke();
-          }
-        }
-
-        const img = new Image();
-        img.src = c.toDataURL('image/png');
-        return img;
-      }
-
-      function loadSlotImage(slotIndex, srcPath, fallbackType) {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          state.slots[slotIndex].img = img;
-          updateThumbnail(slotIndex);
-          if (state.activeSlotIndex === slotIndex) renderDisplay();
-        };
-        img.onerror = () => {
-          state.slots[slotIndex].img = createProceduralLainGraphic(fallbackType);
-          state.slots[slotIndex].img.onload = () => {
-            updateThumbnail(slotIndex);
-            if (state.activeSlotIndex === slotIndex) renderDisplay();
-          };
-        };
-        img.src = srcPath;
-      }
-
-      function initSlots() {
-        loadSlotImage(0, './presets/lain_angel.jpg', 'angel');
-        loadSlotImage(1, './presets/ocular_pcb.jpg', 'ocular');
-        updateThumbnail(2);
-      }
-
-      /* ------------------------------------------------------------------------
-         Отрисовка в 240x240 (Круглое окно ST7789)
-         ------------------------------------------------------------------------ */
-      function renderDisplay() {
-        const slot = state.slots[state.activeSlotIndex];
-        const img = slot.img;
-        const animatedGifView = document.getElementById('animatedGifView');
-        const screenBadgeText = document.getElementById('screenBadgeText');
-
-        if (!img && !slot.isGif) {
-          if (animatedGifView) animatedGifView.style.display = 'none';
-          displayCanvas.style.display = 'block';
-          displayCtx.fillStyle = '#05070a';
-          displayCtx.fillRect(0, 0, 240, 240);
-          displayCtx.fillStyle = 'rgba(208, 0, 54, 0.5)';
-          displayCtx.font = '11px ' + getComputedStyle(document.body).fontFamily;
-          displayCtx.textAlign = 'center';
-          displayCtx.fillText('[ EMPTY SLOT ]', 120, 115);
-          displayCtx.fillStyle = '#64748b';
-          displayCtx.font = '9px monospace';
-          displayCtx.fillText('TAP UPLOAD TO INJECT', 120, 135);
-          if (screenBadgeText) screenBadgeText.textContent = 'ST7789 · 240×240 CIR';
-          return;
-        }
-
-        // --- ЕСЛИ ЗАГРУЖЕН АНИМИРОВАННЫЙ GIF: ПРЯМОЕ ВОСПРОИЗВЕДЕНИЕ В КРУГЛОМ ЭКРАНЕ ---
-        if (slot.isGif && slot.gifUrl && animatedGifView) {
-          if (animatedGifView.src !== slot.gifUrl) {
-            animatedGifView.src = slot.gifUrl;
-          }
-          animatedGifView.style.display = 'block';
-          displayCanvas.style.display = 'none';
-
-          // Применяем аппаратные CSS-фильтры к живой анимации GIF
-          let filterStr = `brightness(${slot.brightness}%) contrast(${slot.contrast}%)`;
-          if (slot.filter === 'phosphor') filterStr += ' sepia(1) hue-rotate(85deg) saturate(3)';
-          else if (slot.filter === 'cyan') filterStr += ' sepia(1) hue-rotate(150deg) saturate(3)';
-          else if (slot.filter === 'glitch') filterStr += ' hue-rotate(280deg) saturate(2)';
-          else if (slot.filter === 'binary') filterStr += ' grayscale(1) contrast(300%)';
-          else if (slot.filter === 'invert') filterStr += ' invert(1)';
-
-          animatedGifView.style.filter = filterStr;
-          animatedGifView.style.transform = `translate(${slot.panX}px, ${slot.panY}px) scale(${slot.zoom})`;
-
-          if (screenBadgeText) {
-            screenBadgeText.innerHTML = 'ST7789 · <span style="color:#00ff66;font-weight:bold;">▶ GIF LIVE</span>';
-          }
-          updateThumbnail(state.activeSlotIndex);
-          return;
-        }
-
-        // --- ДЛЯ СТАТИЧЕСКИХ КАРТИНОК: CANVAS 240x240 ---
-        if (animatedGifView) animatedGifView.style.display = 'none';
-        displayCanvas.style.display = 'block';
-        if (screenBadgeText) screenBadgeText.textContent = 'ST7789 · 240×240 CIR';
-
-        displayCtx.fillStyle = '#05070a';
-        displayCtx.fillRect(0, 0, 240, 240);
-
-        const offCanvas = document.createElement('canvas');
-        offCanvas.width = 240;
-        offCanvas.height = 240;
-        const offCtx = offCanvas.getContext('2d');
-
-        const imgW = img.naturalWidth || img.width;
-        const imgH = img.naturalHeight || img.height;
-        const minDim = Math.min(imgW, imgH);
-        const baseScale = 240 / minDim;
-        const totalScale = baseScale * slot.zoom;
-
-        const drawW = imgW * totalScale;
-        const drawH = imgH * totalScale;
-        const drawX = (240 - drawW) / 2 + slot.panX;
-        const drawY = (240 - drawH) / 2 + slot.panY;
-
-        offCtx.fillStyle = '#000';
-        offCtx.fillRect(0, 0, 240, 240);
-        offCtx.drawImage(img, drawX, drawY, drawW, drawH);
-
-        const imgData = offCtx.getImageData(0, 0, 240, 240);
-        const data = imgData.data;
-
+      function applySlotFilters(data, slot) {
         const brightnessMul = slot.brightness / 100;
         const contrastFactor = (259 * (slot.contrast + 255)) / (255 * (259 - slot.contrast));
         const filter = slot.filter;
@@ -1380,54 +1130,203 @@
             const gray = 0.299 * r + 0.587 * g + 0.114 * b;
             r = gray * 0.1; g = gray * 0.95; b = gray * 1.05;
           } else if (filter === 'glitch') {
-            r = Math.min(255, r * 1.35);
-            g = g * 0.55;
-            b = Math.min(255, b * 1.4);
+            r = Math.min(255, r * 1.35); g = g * 0.55; b = Math.min(255, b * 1.4);
           } else if (filter === 'binary') {
             const gray = 0.299 * r + 0.587 * g + 0.114 * b;
             const val = gray > 128 ? 255 : 0;
             r = val; g = val; b = val;
           } else if (filter === 'invert') {
-            r = 255 - r;
-            g = 255 - g;
-            b = 255 - b;
+            r = 255 - r; g = 255 - g; b = 255 - b;
           }
 
           data[i] = r;
           data[i + 1] = g;
           data[i + 2] = b;
         }
+      }
 
+      /* ------------------------------------------------------------------------
+         5. ОБРАБОТКА И РЕСАЙЗ GIF ЧЕРЕЗ GIFSHOT
+         ------------------------------------------------------------------------ */
+      async function resizeAndEncodeGif(gifBlob, targetSize = 240) {
+        const ReaderClass = window.GifReader || (window.omggif && window.omggif.GifReader);
+        if (!ReaderClass) throw new Error("Декодер /omggif.min.js не загружен");
+        if (!window.gifshot) throw new Error("Энкодер /gifshot.min.js не загружен");
+
+        const buf = new Uint8Array(await gifBlob.arrayBuffer());
+        const reader = new ReaderClass(buf);
+        const numFrames = reader.numFrames();
+        if (numFrames <= 0) throw new Error("В файле нет кадров GIF");
+
+        const origW = reader.width;
+        const origH = reader.height;
+        const curSlot = state.slots[state.activeSlotIndex];
+
+        logToTerminal(`ДЕКОДИРОВАНИЕ: ${origW}x${origH} (${numFrames} КАДРОВ)...`, 'cyan');
+
+        const cSrc = document.createElement('canvas');
+        cSrc.width = origW; cSrc.height = origH;
+        const ctxSrc = cSrc.getContext('2d', { willReadFrequently: true });
+        const rgbaBuf = new Uint8Array(origW * origH * 4);
+
+        const frameImages = [];
+        let totalDelay = 0;
+
+        const minDim = Math.min(origW, origH);
+        const baseScale = targetSize / minDim;
+        const totalScale = baseScale * (curSlot.zoom || 1.0);
+        const drawW = origW * totalScale;
+        const drawH = origH * totalScale;
+        const drawX = (targetSize - drawW) / 2 + (curSlot.panX || 0);
+        const drawY = (targetSize - drawH) / 2 + (curSlot.panY || 0);
+
+        for (let i = 0; i < numFrames; i++) {
+          const info = reader.frameInfo(i);
+          reader.decodeAndBlitFrameRGBA(i, rgbaBuf);
+
+          const imgData = new ImageData(new Uint8ClampedArray(rgbaBuf.buffer), origW, origH);
+          ctxSrc.putImageData(imgData, 0, 0);
+
+          if (info.disposal === 2) {
+            for (let row = 0; row < info.height; row++) {
+              const start = ((info.y + row) * origW + info.x) * 4;
+              rgbaBuf.fill(0, start, start + info.width * 4);
+            }
+          }
+
+          const cDst = document.createElement('canvas');
+          cDst.width = targetSize; cDst.height = targetSize;
+          const ctxDst = cDst.getContext('2d', { willReadFrequently: true });
+
+          ctxDst.fillStyle = '#000000';
+          ctxDst.fillRect(0, 0, targetSize, targetSize);
+          ctxDst.drawImage(cSrc, drawX, drawY, drawW, drawH);
+
+          const frameData = ctxDst.getImageData(0, 0, targetSize, targetSize);
+          applySlotFilters(frameData.data, curSlot);
+          ctxDst.putImageData(frameData, 0, 0);
+
+          frameImages.push(cDst.toDataURL('image/png'));
+          totalDelay += (info.delay && info.delay >= 2) ? info.delay : 10;
+        }
+
+        const avgIntervalSec = Math.max(0.04, (totalDelay / numFrames) / 100);
+        logToTerminal(`СБОРКА ВАЛИДНОГО GIF89A (GIFSHOT 240x240)...`, 'cyan');
+
+        return new Promise((resolve, reject) => {
+          window.gifshot.createGIF({
+            images: frameImages,
+            gifWidth: targetSize,
+            gifHeight: targetSize,
+            interval: avgIntervalSec,
+            numWorkers: 2,
+            sampleInterval: 10
+          }, async function(obj) {
+            if (obj.error) {
+              reject(new Error("Ошибка gifshot: " + obj.errorMsg));
+            } else {
+              const res = await fetch(obj.image);
+              const blob = await res.blob();
+              resolve(blob);
+            }
+          });
+        });
+      }
+
+      /* ------------------------------------------------------------------------
+         6. ОТРИСОВКА И ПРЕДПРОСМОТР
+         ------------------------------------------------------------------------ */
+      function renderDisplay() {
+        const slot = state.slots[state.activeSlotIndex];
+        const img = slot.img;
+
+        if (!img && !slot.isGif) {
+          if (animatedGifView) animatedGifView.style.display = 'none';
+          displayCanvas.style.display = 'block';
+          displayCtx.fillStyle = '#05070a';
+          displayCtx.fillRect(0, 0, 240, 240);
+          displayCtx.fillStyle = 'rgba(208, 0, 54, 0.5)';
+          displayCtx.font = '11px monospace';
+          displayCtx.textAlign = 'center';
+          displayCtx.fillText('[ ПУСТОЙ СЛОТ ]', 120, 115);
+          if (screenBadgeText) screenBadgeText.textContent = 'GC9A01 · 240×240 CIR';
+          return;
+        }
+
+        if (slot.isGif && slot.gifUrl && animatedGifView) {
+          if (animatedGifView.src !== slot.gifUrl) animatedGifView.src = slot.gifUrl;
+          animatedGifView.style.display = 'block';
+          displayCanvas.style.display = 'none';
+
+          let filterStr = `brightness(${slot.brightness}%) contrast(${slot.contrast}%)`;
+          if (slot.filter === 'phosphor') filterStr += ' sepia(1) hue-rotate(85deg) saturate(3)';
+          else if (slot.filter === 'cyan') filterStr += ' sepia(1) hue-rotate(150deg) saturate(3)';
+          else if (slot.filter === 'glitch') filterStr += ' hue-rotate(280deg) saturate(2)';
+          else if (slot.filter === 'binary') filterStr += ' grayscale(1) contrast(300%)';
+          else if (slot.filter === 'invert') filterStr += ' invert(1)';
+
+          animatedGifView.style.filter = filterStr;
+          animatedGifView.style.transform = `translate(${slot.panX}px, ${slot.panY}px) scale(${slot.zoom})`;
+          if (screenBadgeText) screenBadgeText.innerHTML = 'GC9A01 · <span style="color:#00ff66;">▶ GIF LIVE</span>';
+          updateThumbnail(state.activeSlotIndex);
+          return;
+        }
+
+        if (animatedGifView) animatedGifView.style.display = 'none';
+        displayCanvas.style.display = 'block';
+        if (screenBadgeText) screenBadgeText.textContent = 'GC9A01 · 240×240 CIR';
+
+        displayCtx.fillStyle = '#000';
+        displayCtx.fillRect(0, 0, 240, 240);
+
+        const imgW = img.naturalWidth || img.width;
+        const imgH = img.naturalHeight || img.height;
+        const minDim = Math.min(imgW, imgH);
+        const baseScale = 240 / minDim;
+        const totalScale = baseScale * slot.zoom;
+        const drawW = imgW * totalScale;
+        const drawH = imgH * totalScale;
+        const drawX = (240 - drawW) / 2 + slot.panX;
+        const drawY = (240 - drawH) / 2 + slot.panY;
+
+        displayCtx.drawImage(img, drawX, drawY, drawW, drawH);
+        const imgData = displayCtx.getImageData(0, 0, 240, 240);
+        applySlotFilters(imgData.data, slot);
         displayCtx.putImageData(imgData, 0, 0);
+
         updateThumbnail(state.activeSlotIndex);
       }
 
       function updateThumbnail(slotIndex) {
         const thumbCanvas = document.getElementById(`slotThumbCanvas${slotIndex}`);
-        if (!thumbCanvas) return;
+        const slotCard = document.getElementById(`slotTab${slotIndex}`);
+        if (!thumbCanvas || !slotCard) return;
         const thumbCtx = thumbCanvas.getContext('2d');
         const slot = state.slots[slotIndex];
 
         thumbCtx.fillStyle = '#05070a';
         thumbCtx.fillRect(0, 0, 70, 70);
 
-        if (slot.img) {
-          if (slotIndex === state.activeSlotIndex && displayCanvas) {
-            thumbCtx.drawImage(displayCanvas, 0, 0, 70, 70);
+        const statusPill = slotCard.querySelector('.slot-status-pill');
+        if (statusPill) {
+          if (slot.img || slot.isGif) {
+            statusPill.textContent = (slotIndex === state.activeSlotIndex) ? 'АКТИВЕН' : 'ПАМЯТЬ';
+            statusPill.style.color = '#00ff66';
           } else {
-            const img = slot.img;
-            const imgW = img.naturalWidth || img.width;
-            const imgH = img.naturalHeight || img.height;
-            const minDim = Math.min(imgW, imgH);
-            const s = 70 / minDim;
-            thumbCtx.drawImage(img, (70 - imgW * s) / 2, (70 - imgH * s) / 2, imgW * s, imgH * s);
+            statusPill.textContent = 'ПУСТО';
+            statusPill.style.color = '';
           }
+        }
+
+        if (slot.img) {
+          const img = slot.img;
+          const imgW = img.naturalWidth || img.width || 240;
+          const imgH = img.naturalHeight || img.height || 240;
+          const s = 70 / Math.min(imgW, imgH);
+          thumbCtx.drawImage(img, (70 - imgW * s) / 2, (70 - imgH * s) / 2, imgW * s, imgH * s);
         }
       }
 
-      /* ------------------------------------------------------------------------
-         Переключение слотов
-         ------------------------------------------------------------------------ */
       function switchSlot(slotIdx) {
         if (state.isTransmitting) return;
         state.activeSlotIndex = slotIdx;
@@ -1451,51 +1350,43 @@
         });
 
         renderDisplay();
-        logToTerminal(`SELECT SLOT 0${slotIdx + 1} (${slot.addr})`, 'cyan');
+        logToTerminal(`СЛОТ 0${slotIdx + 1} (${slot.addr}) ВЫБРАН`, 'cyan');
       }
 
       /* ------------------------------------------------------------------------
-         Сдвиг пальцем и мышью
+         7. ПЕРЕТАСКИВАНИЕ / PAN
          ------------------------------------------------------------------------ */
-      let isDragging = false;
-      let startX = 0, startY = 0;
-      let initPanX = 0, initPanY = 0;
-
+      let isDragging = false, startX = 0, startY = 0, initPanX = 0, initPanY = 0;
       function onPointerDown(e) {
         isDragging = true;
-        const pageX = e.touches ? e.touches[0].pageX : e.pageX;
-        const pageY = e.touches ? e.touches[0].pageY : e.pageY;
-        startX = pageX; startY = pageY;
+        const pX = e.touches ? e.touches[0].pageX : e.pageX;
+        const pY = e.touches ? e.touches[0].pageY : e.pageY;
+        startX = pX; startY = pY;
         const slot = state.slots[state.activeSlotIndex];
         initPanX = slot.panX; initPanY = slot.panY;
       }
-
       function onPointerMove(e) {
         if (!isDragging) return;
         if (e.cancelable) e.preventDefault();
-        const pageX = e.touches ? e.touches[0].pageX : e.pageX;
-        const pageY = e.touches ? e.touches[0].pageY : e.pageY;
-
+        const pX = e.touches ? e.touches[0].pageX : e.pageX;
+        const pY = e.touches ? e.touches[0].pageY : e.pageY;
         const slot = state.slots[state.activeSlotIndex];
-        slot.panX = initPanX + (pageX - startX);
-        slot.panY = initPanY + (pageY - startY);
-
+        slot.panX = initPanX + (pX - startX);
+        slot.panY = initPanY + (pY - startY);
         panCoordsText.textContent = `OFFSET: ${Math.round(slot.panX)}, ${Math.round(slot.panY)}`;
         renderDisplay();
       }
-
       function onPointerUp() { isDragging = false; }
 
       roundScreenGlass.addEventListener('mousedown', onPointerDown);
       window.addEventListener('mousemove', onPointerMove);
       window.addEventListener('mouseup', onPointerUp);
-
       roundScreenGlass.addEventListener('touchstart', onPointerDown, { passive: false });
       window.addEventListener('touchmove', onPointerMove, { passive: false });
       window.addEventListener('touchend', onPointerUp);
 
       /* ------------------------------------------------------------------------
-         Слушатели всех 4 ползунков
+         8. ПОЛЗУНКИ И КНОПКИ
          ------------------------------------------------------------------------ */
       zoomSlider.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
@@ -1503,43 +1394,29 @@
         zoomValText.textContent = `${val.toFixed(2)}x`;
         renderDisplay();
       });
-
       brightSlider.addEventListener('input', (e) => {
         const val = parseInt(e.target.value, 10);
         state.slots[state.activeSlotIndex].brightness = val;
         brightValText.textContent = `${val}%`;
         renderDisplay();
       });
-
       contrastSlider.addEventListener('input', (e) => {
         const val = parseInt(e.target.value, 10);
         state.slots[state.activeSlotIndex].contrast = val;
         contrastValText.textContent = `${val}%`;
         renderDisplay();
       });
-
       ditherSlider.addEventListener('input', (e) => {
         const val = parseInt(e.target.value, 10);
         const labels = ['OFF', 'RGB565', 'BAYER', 'FLOYD', '1-BIT'];
         ditherValText.textContent = labels[val] || 'RGB565';
         state.slots[state.activeSlotIndex].ditherLevel = val;
-        if (val === 4) {
-          state.slots[state.activeSlotIndex].filter = 'binary';
-        } else if (val === 0) {
-          state.slots[state.activeSlotIndex].filter = 'normal';
-        } else {
-          state.slots[state.activeSlotIndex].filter = 'rgb565';
-        }
-        syncFilterButtons();
+        state.slots[state.activeSlotIndex].filter = val === 4 ? 'binary' : (val === 0 ? 'normal' : 'rgb565');
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.getAttribute('data-filter') === state.slots[state.activeSlotIndex].filter);
+        });
         renderDisplay();
       });
-
-      function syncFilterButtons() {
-        const activeFilter = state.slots[state.activeSlotIndex].filter;
-        document.querySelectorAll('.filter-btn').forEach(btn => {
-          btn.classList.toggle('active', btn.getAttribute('data-filter') === activeFilter);
-        });
-      }
 
       btnCenterImage.addEventListener('click', () => {
         const slot = state.slots[state.activeSlotIndex];
@@ -1564,266 +1441,186 @@
         btn.addEventListener('click', () => {
           const filter = btn.getAttribute('data-filter');
           state.slots[state.activeSlotIndex].filter = filter;
-          syncFilterButtons();
+          document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b === btn));
           renderDisplay();
-          logToTerminal(`FILTER: ${filter.toUpperCase()}`, 'info');
+          logToTerminal(`ФИЛЬТР: ${filter.toUpperCase()}`, 'info');
         });
       });
 
       document.querySelectorAll('.slot-card').forEach(tab => {
-        tab.addEventListener('click', () => {
-          const slotIdx = parseInt(tab.getAttribute('data-slot'), 10);
-          switchSlot(slotIdx);
-        });
+        tab.addEventListener('click', () => switchSlot(parseInt(tab.getAttribute('data-slot'), 10)));
       });
 
       /* ------------------------------------------------------------------------
-         Загрузка файлов
+         9. ЗАГРУЗКА ФАЙЛОВ И ПРЕСЕТЫ
          ------------------------------------------------------------------------ */
       uploadBtn.addEventListener('click', () => fileInput.click());
-
       fileInput.addEventListener('change', (e) => {
-        if (e.target.files && e.target.files[0]) {
-          const file = e.target.files[0];
-          const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
-          const currentSlot = state.slots[state.activeSlotIndex];
-          currentSlot.name = file.name.substring(0, 8).toUpperCase();
-          currentSlot.fileSize = file.size;
+        if (!e.target.files || !e.target.files[0]) return;
+        const file = e.target.files[0];
+        const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
+        const curSlot = state.slots[state.activeSlotIndex];
 
-          if (isGif) {
-            currentSlot.isGif = true;
-            currentSlot.gifBlob = file;
-            currentSlot.gifUrl = URL.createObjectURL(file);
+        if (isGif) {
+          curSlot.isGif = true;
+          curSlot.gifBlob = file;
+          curSlot.gifUrl = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = () => {
+            curSlot.img = img;
+            renderDisplay();
+            logToTerminal(`GIF ВЫБРАН: ${file.name} (${Math.round(file.size / 1024)} KB)`, 'success');
+          };
+          img.src = curSlot.gifUrl;
+        } else {
+          curSlot.isGif = false;
+          curSlot.gifBlob = null;
+          curSlot.gifUrl = null;
+          const reader = new FileReader();
+          reader.onload = (event) => {
             const img = new Image();
             img.onload = () => {
-              currentSlot.img = img;
+              curSlot.img = img;
               renderDisplay();
-              logToTerminal(`ANIMATED GIF LOADED: ${file.name} (${Math.round(file.size / 1024)} KB) [PLAYING LIVE]`, 'success');
+              logToTerminal(`КАРТИНКА: ${file.name}`, 'success');
             };
-            img.src = currentSlot.gifUrl;
-          } else {
-            currentSlot.isGif = false;
-            currentSlot.gifBlob = null;
-            currentSlot.gifUrl = null;
-            const reader = new FileReader();
-            reader.onload = (event) => {
-              const img = new Image();
-              img.onload = () => {
-                currentSlot.img = img;
-                renderDisplay();
-                logToTerminal(`STATIC IMAGE LOADED: ${file.name} (240x240 CROPPED)`, 'success');
-              };
-              img.src = event.target.result;
-            };
-            reader.readAsDataURL(file);
-          }
+            img.src = event.target.result;
+          };
+          reader.readAsDataURL(file);
         }
       });
 
-      /* ------------------------------------------------------------------------
-         Пресеты
-         ------------------------------------------------------------------------ */
       document.querySelectorAll('.preset-chip').forEach(chip => {
         chip.addEventListener('click', () => {
           const presetId = chip.getAttribute('data-preset');
-          logToTerminal(`LOAD PRESET: ${presetId.toUpperCase()}`, 'cyan');
-
-          if (presetId === 'procedural_wire') {
-            const procImg = createProceduralLainGraphic('angel');
-            procImg.onload = () => {
-              state.slots[state.activeSlotIndex].img = procImg;
-              renderDisplay();
-            };
-          } else {
-            const img = new Image();
-            img.onload = () => {
-              state.slots[state.activeSlotIndex].img = img;
-              renderDisplay();
-            };
-            img.onerror = () => {
-              const procImg = createProceduralLainGraphic(presetId === 'ocular_pcb' ? 'ocular' : 'angel');
-              procImg.onload = () => {
-                state.slots[state.activeSlotIndex].img = procImg;
-                renderDisplay();
-              };
-            };
-            img.src = `./presets/${presetId}.jpg`;
-          }
+          logToTerminal(`ПРЕСЕТ: ${presetId.toUpperCase()}`, 'cyan');
+          const img = new Image();
+          img.onload = () => {
+            state.slots[state.activeSlotIndex].isGif = false;
+            state.slots[state.activeSlotIndex].img = img;
+            renderDisplay();
+          };
+          img.src = `./presets/${presetId}.jpg`;
         });
       });
 
-      connStatusBtn.addEventListener('click', () => {
-        logToTerminal('PING ESP32 192.168.4.1...', 'cyan');
-        setTimeout(() => {
-          logToTerminal('ACK: ESP32-C3 SUPERMINI ALIVE', 'success');
-        }, 200);
-      });
-
       /* ------------------------------------------------------------------------
-         Кодирование в бинарный поток RGB565 (115200 байт)
+         10. ОТПРАВКА НА ПЛАТУ
          ------------------------------------------------------------------------ */
       function encodeCanvasToRGB565() {
         const imgData = displayCtx.getImageData(0, 0, 240, 240);
-        const data = imgData.data;
-        const totalPixels = 240 * 240;
-        const buffer = new Uint8Array(totalPixels * 2);
-
-        let byteIdx = 0;
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i] >> 3;
-          const g = data[i + 1] >> 2;
-          const b = data[i + 2] >> 3;
-
-          const rgb16 = (r << 11) | (g << 5) | b;
-          buffer[byteIdx++] = (rgb16 >> 8) & 0xFF;
-          buffer[byteIdx++] = rgb16 & 0xFF;
+        const d = imgData.data;
+        const buf = new Uint8Array(240 * 240 * 2);
+        let ptr = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i] >> 3;
+          const g = d[i + 1] >> 2;
+          const b = d[i + 2] >> 3;
+          const rgb = (r << 11) | (g << 5) | b;
+          buf[ptr++] = (rgb >> 8) & 0xff;
+          buf[ptr++] = rgb & 0xff;
         }
-        return buffer;
+        return buf;
       }
 
-      /* ------------------------------------------------------------------------
-         Передача данных в ESP32
-         ------------------------------------------------------------------------ */
       async function uploadToESP32(blob, slotIndex) {
         const slotNum = slotIndex + 1;
-        const currentSlot = state.slots[slotIndex];
-        const isGif = currentSlot && currentSlot.isGif;
+        const isGif = state.slots[slotIndex].isGif;
         const filename = isGif ? `slot${slotNum}.gif` : `slot${slotNum}.bin`;
 
-        logToTerminal(`BURST FLASH SLOT 0${slotNum}: ${blob.size} BYTES (${filename})...`, 'cyan');
+        logToTerminal(`ПЕРЕДАЧА ВО FLASH: ${Math.round(blob.size / 1024)} KB...`, 'cyan');
+        const formData = new FormData();
+        formData.append('slot', slotNum);
+        formData.append('data', blob, filename);
+
         try {
-          const formData = new FormData();
-          formData.append('slot', slotNum);
-          formData.append('data', blob, filename);
-
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-          const response = await fetch(`/api/upload?slot=${slotNum}`, {
-            method: 'POST',
-            body: formData,
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-
-          if (response.ok) {
-            logToTerminal(`ESP32 HARDWARE CONFIRMED: /${filename} COMMITTED TO FLASH!`, 'success');
+          const res = await fetch(`/api/upload?slot=${slotNum}`, { method: 'POST', body: formData });
+          if (res.ok) {
+            logToTerminal(`ФАЙЛ ${filename} УСПЕШНО ЗАПИСАН!`, 'success');
             return true;
           }
         } catch (err) {
-          // Simulation fallback
+          logToTerminal(`ОШИБКА СЕТИ: ${err.message}`, 'crimson');
         }
-        return simulateTransmission(blob, slotIndex);
-      }
-
-      function simulateTransmission(blob, slotIndex) {
-        return new Promise((resolve) => {
-          state.isTransmitting = true;
-          btnTransmit.classList.add('transmitting');
-          btnTransmit.querySelector('.btn-text').textContent = 'ПРОШИВКА FLASH...';
-          roundBezel.classList.add('glitching');
-
-          const totalBytes = blob.size;
-          let bytesWritten = 0;
-          const chunkSize = 4096;
-
-          logToTerminal(`INIT SPI DMA CH0 (ST7789 240x240)...`, 'crimson');
-          logToTerminal(`LITTLEFS MOUNT ADDR: 0x00100000`, 'info');
-
-          const interval = setInterval(() => {
-            bytesWritten += chunkSize;
-            if (bytesWritten > totalBytes) bytesWritten = totalBytes;
-
-            const progress = bytesWritten / totalBytes;
-            const percent = Math.round(progress * 100);
-
-            bufferPercent.textContent = `${percent}%`;
-            bufferBytes.textContent = `${(bytesWritten / 1024).toFixed(1)} / ${(totalBytes / 1024).toFixed(1)} KB`;
-
-            if (bytesWritten >= totalBytes) {
-              clearInterval(interval);
-              state.isTransmitting = false;
-              btnTransmit.classList.remove('transmitting');
-              btnTransmit.querySelector('.btn-text').textContent = 'ЗАПИСАТЬ В БРЕЛОК';
-              roundBezel.classList.remove('glitching');
-
-              logToTerminal(`SECTOR ERASE & WRITE: ${totalBytes} BYTES OK`, 'success');
-              logToTerminal(`RAMWR CMD FLUSHED TO ROUND LCD`, 'success');
-              resolve(true);
-            }
-          }, 60);
-        });
       }
 
       btnTransmit.addEventListener('click', async () => {
         if (state.isTransmitting) return;
-        const currentSlot = state.slots[state.activeSlotIndex];
+        const curSlot = state.slots[state.activeSlotIndex];
+        state.isTransmitting = true;
+        btnTransmit.classList.add('transmitting');
+        roundBezel.classList.add('glitching');
 
-        if (currentSlot.isGif && currentSlot.gifBlob) {
-          // Отправка реального многокадрового GIF файла на ESP32
-          logToTerminal(`SENDING MULTI-FRAME GIF: ${currentSlot.name} (${Math.round(currentSlot.gifBlob.size / 1024)} KB)...`, 'crimson');
-          await uploadToESP32(currentSlot.gifBlob, state.activeSlotIndex);
-        } else {
-          // Отправка одиночного кадра / холста
-          const rawBuffer = encodeCanvasToRGB565();
-          const blob = new Blob([rawBuffer], { type: 'application/octet-stream' });
-          await uploadToESP32(blob, state.activeSlotIndex);
+        try {
+          if (curSlot.isGif && curSlot.gifBlob) {
+            btnTransmit.querySelector('.btn-text').textContent = 'СЖАТИЕ 240x240...';
+            const resizedBlob = await resizeAndEncodeGif(curSlot.gifBlob, 240);
+
+            logToTerminal(`GIF СЖАТ: ${Math.round(resizedBlob.size / 1024)} KB. ЗАПИСЬ ВО FLASH...`, 'success');
+            btnTransmit.querySelector('.btn-text').textContent = 'ПРОШИВКА FLASH...';
+            await uploadToESP32(resizedBlob, state.activeSlotIndex);
+          } else {
+            btnTransmit.querySelector('.btn-text').textContent = 'ПРОШИВКА FLASH...';
+            const raw = encodeCanvasToRGB565();
+            const blob = new Blob([raw], { type: 'application/octet-stream' });
+            await uploadToESP32(blob, state.activeSlotIndex);
+          }
+        } catch (err) {
+          logToTerminal(`ОШИБКА: ${err.message}`, 'crimson');
+        } finally {
+          state.isTransmitting = false;
+          btnTransmit.classList.remove('transmitting');
+          btnTransmit.querySelector('.btn-text').textContent = 'ЗАПИСАТЬ В БРЕЛОК';
+          roundBezel.classList.remove('glitching');
         }
       });
 
       /* ------------------------------------------------------------------------
-         Экспорт бинарника (.bin) и заголовка (.h)
+         11. ЭКСПОРТ .BIN И .H
          ------------------------------------------------------------------------ */
       btnDownloadBin.addEventListener('click', () => {
-        const rawBuffer = encodeCanvasToRGB565();
-        const blob = new Blob([rawBuffer], { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
+        const raw = encodeCanvasToRGB565();
+        const blob = new Blob([raw], { type: 'application/octet-stream' });
         const a = document.createElement('a');
-        a.href = url;
+        a.href = URL.createObjectURL(blob);
         a.download = `slot_0${state.activeSlotIndex + 1}_round240.bin`;
-        document.body.appendChild(a);
         a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        logToTerminal(`EXPORT: slot_0${state.activeSlotIndex + 1}_round240.bin`, 'success');
       });
 
       btnDownloadHeader.addEventListener('click', () => {
-        const rawBuffer = encodeCanvasToRGB565();
-        let headerText = `// ESP32 ST7789 240x240 Round Image\n#include <stdint.h>\nconst uint16_t image_slot_0${state.activeSlotIndex + 1}[57600] PROGMEM = {\n  `;
-        for (let i = 0; i < rawBuffer.length; i += 2) {
-          const word = (rawBuffer[i] << 8) | rawBuffer[i + 1];
-          headerText += `0x${word.toString(16).padStart(4, '0')}`;
-          if (i + 2 < rawBuffer.length) {
-            headerText += ', ';
-            if ((i / 2 + 1) % 12 === 0) headerText += '\n  ';
-          }
+        const raw = encodeCanvasToRGB565();
+        let h = `const uint16_t image_slot_0${state.activeSlotIndex + 1}[57600] PROGMEM = {\n  `;
+        for (let i = 0; i < raw.length; i += 2) {
+          h += `0x${((raw[i] << 8) | raw[i + 1]).toString(16).padStart(4, '0')}, `;
+          if ((i / 2 + 1) % 12 === 0) h += '\n  ';
         }
-        headerText += '\n};\n';
-
-        const blob = new Blob([headerText], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
+        h += '\n};\n';
         const a = document.createElement('a');
-        a.href = url;
+        a.href = URL.createObjectURL(new Blob([h], { type: 'text/plain' }));
         a.download = `slot_0${state.activeSlotIndex + 1}_round.h`;
-        document.body.appendChild(a);
         a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        logToTerminal(`EXPORT: slot_0${state.activeSlotIndex + 1}_round.h`, 'success');
       });
 
-      /* ------------------------------------------------------------------------
-         Старт
-         ------------------------------------------------------------------------ */
+      // Переключение тем
+      btnThemeToggle.addEventListener('click', () => {
+        const isDark = document.body.classList.toggle('theme-dark');
+        document.body.classList.toggle('theme-light', !isDark);
+        themeIcon.textContent = isDark ? '⚫' : '⚪';
+      });
+
+      // Старт
       window.addEventListener('DOMContentLoaded', () => {
-        initSlots();
-        logToTerminal('WIRED_KEYCHAIN OS READY', 'crimson');
-        logToTerminal('TARGET: ESP32-C3 SUPERMINI (4MB)', 'info');
-        logToTerminal('DISPLAY: ST7789 1.28" ROUND IPS', 'info');
+        logToTerminal('WIRED_KEYCHAIN OS СИСТЕМА ГОТОВА', 'crimson');
+        logToTerminal('ДИСПЛЕЙ: GC9A01 240x240 ROUND', 'info');
+        const hasReader = !!(window.GifReader || (window.omggif && window.omggif.GifReader));
+        const hasWriter = !!window.gifshot;
+        if (!hasReader || !hasWriter) {
+          logToTerminal(`МОДУЛИ: ${hasReader ? 'OK' : 'НЕТ ДЕКОДЕРА'} / ${hasWriter ? 'OK' : 'НЕТ GIFSHOT'}`, 'crimson');
+        } else {
+          logToTerminal('КОДЕКИ ДЕКОДЕР + GIFSHOT: АКТИВНЫ', 'success');
+        }
+        renderDisplay();
       });
-
-      window.uploadToESP32 = uploadToESP32;
     })();
   </script>
 </body>

@@ -25,3 +25,5 @@ void display_show_placeholder(uint8_t slot);
 
 // QR Portal routines
 void display_show_qr(QrViewMode mode);
+
+void display_show_system_info(void);

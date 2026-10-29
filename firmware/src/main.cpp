@@ -97,60 +97,72 @@ static void set_state_charging_sleep(void) {
 // NON-BLOCKING BUTTON ENGINE
 // ============================================================================
 
+static uint8_t s_brightness_level = 0; // 0=40%, 1=75%, 2=100%
+
+static void cycle_brightness(void) {
+    s_brightness_level = (s_brightness_level + 1) % 3;
+    uint8_t duty = BACKLIGHT_DUTY_PLAYBACK; // 102 (40%)
+    if (s_brightness_level == 1) duty = 190; // ~75%
+    else if (s_brightness_level == 2) duty = 255; // 100%
+    display_set_backlight(duty);
+    Serial.printf("[BRIGHTNESS] Set to level %u (PWM %u)\n", s_brightness_level, duty);
+}
+
 static void button_update(void) {
     bool raw_pressed = (digitalRead(PIN_BUTTON) == LOW);
     uint32_t now = millis();
+    static uint32_t s_last_release_ms = 0;
+    static uint8_t  s_pending_clicks = 0;
 
     if (raw_pressed && !s_btn_is_pressed) {
-        // Нажали на кнопку: фиксируем время начала
         s_btn_is_pressed = true;
         s_btn_press_ms   = now;
         s_btn_ignore_rel = false;
     } 
     else if (raw_pressed && s_btn_is_pressed) {
         uint32_t duration = now - s_btn_press_ms;
-
-        // СВЕРХДОЛГОЕ ЗАЖАТИЕ (> 5.0 сек): Уходим в сон
         if (duration >= BTN_DEEP_SLEEP_MS && !s_btn_ignore_rel) {
             s_btn_ignore_rel = true;
+            s_pending_clicks = 0;
             enter_deep_sleep();
         }
     } 
     else if (!raw_pressed && s_btn_is_pressed) {
-        // Отпустили кнопку: считаем длительность нажатия
         uint32_t duration = now - s_btn_press_ms;
         s_btn_is_pressed  = false;
 
-        // Если это было удержание > 5 сек, игнорируем отпускание
-        if (s_btn_ignore_rel) {
-            return;
-        }
+        if (s_btn_ignore_rel) return;
 
-        // 1. КОРОТКИЙ КЛИК (от 30 мс до 2.5 сек)
+        // Короткий клик
         if (duration >= BTN_DEBOUNCE_MS && duration < BTN_LONG_PRESS_MS) {
             if (s_state == STATE_PLAYBACK) {
-                // Переключаем активный слот: 1 -> 2 -> 3 -> 1
-                s_active_slot = (s_active_slot % TOTAL_SLOTS) + 1;
-                Serial.printf("[BUTTON] Switch slot -> %u\n", s_active_slot);
-                display_open_slot(s_active_slot);
-            } 
-            else if (s_state == STATE_PORTAL) {
-                // В режиме Wi-Fi переключаем QR-код: Wi-Fi <-> Ссылка на сайт
+                s_pending_clicks++;
+                s_last_release_ms = now;
+            } else if (s_state == STATE_PORTAL) {
                 s_qr_mode = (s_qr_mode == QR_MODE_WIFI) ? QR_MODE_URL : QR_MODE_WIFI;
                 display_show_qr(s_qr_mode);
             }
         } 
-        // 2. ДОЛГОЕ ЗАЖАТИЕ (от 2.5 сек до 5.0 сек)
+        // Долгое нажатие (3 сек)
         else if (duration >= BTN_LONG_PRESS_MS && duration < BTN_DEEP_SLEEP_MS) {
-            if (s_state == STATE_PLAYBACK) {
-                // Вход в режим Wi-Fi портала
-                set_state_portal();
-            } 
-            else if (s_state == STATE_PORTAL) {
-                // Выход обратно к просмотру картинок
-                set_state_playback();
-            }
+            s_pending_clicks = 0;
+            if (s_state == STATE_PLAYBACK) set_state_portal();
+            else if (s_state == STATE_PORTAL) set_state_playback();
         }
+    }
+
+    // Обработка одиночного и двойного клика в режиме воспроизведения
+    if (s_pending_clicks > 0 && (now - s_last_release_ms > 300)) {
+        if (s_pending_clicks == 1) {
+            // Одиночный клик: переключаем слот (1 -> 2 -> 3 -> 4)
+            s_active_slot = (s_active_slot % TOTAL_SLOTS) + 1;
+            Serial.printf("[BUTTON] Switch slot -> %u\n", s_active_slot);
+            display_open_slot(s_active_slot);
+        } else if (s_pending_clicks >= 2) {
+            // Двойной клик: меняем яркость!
+            cycle_brightness();
+        }
+        s_pending_clicks = 0;
     }
 }
 

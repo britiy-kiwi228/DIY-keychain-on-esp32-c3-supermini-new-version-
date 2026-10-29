@@ -46,4 +46,4 @@
 #define CHARGE_VBUS_THRESHOLD_MV 3800 // Threshold to detect 5V USB connection via divider
 
 // --- 6. STORAGE & SLOTS ---
-#define TOTAL_SLOTS       3
+#define TOTAL_SLOTS       4

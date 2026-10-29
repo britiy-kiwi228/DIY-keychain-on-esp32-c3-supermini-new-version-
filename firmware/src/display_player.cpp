@@ -62,11 +62,21 @@ static int32_t GIF_seek(GIFFILE *pFile, int32_t iPosition) {
  * and pushes directly to GC9A01/ST7789 display window via SPI.
  */
 static void GIF_draw(GIFDRAW *pDraw) {
+    if (!pDraw || !pDraw->pPixels || !pDraw->pPalette) return;
+
     uint8_t *s = pDraw->pPixels;
     uint16_t *pal = pDraw->pPalette;
     int width = pDraw->iWidth;
     int y = pDraw->iY + pDraw->y;
     int x = pDraw->iX;
+
+    // Авто-центрирование гифки по центру круглого экрана 240х240:
+    if (pDraw->iWidth < 240) {
+        x += (240 - pDraw->iWidth) / 2;
+    }
+    if (pDraw->iHeight < 240) {
+        y += (240 - pDraw->iHeight) / 2;
+    }
 
     if (y < 0 || y >= 240) return;
     if (x < 0) {
@@ -86,7 +96,7 @@ static void GIF_draw(GIFDRAW *pDraw) {
             if (c != ucTransparent) {
                 s_lineBuffer[i] = pal[c];
             } else {
-                s_lineBuffer[i] = 0x0000; // Black background for transparent pixels
+                s_lineBuffer[i] = 0x0000;
             }
         }
     } else {
@@ -115,6 +125,8 @@ void display_init(void) {
     s_tft.init();
     s_tft.setRotation(0);
     s_tft.fillScreen(TFT_BLACK);
+    // ВОТ ОНА: ВКЛЮЧАЕМ ДЕКОДЕР GIF! (Без этого был вечный вылет)
+    s_gif.begin(BIG_ENDIAN_PIXELS);
 
     display_wake();
 }
@@ -180,6 +192,10 @@ void display_open_slot(uint8_t slot) {
     }
 
     s_current_slot = slot;
+    if (slot == 4) {
+        display_show_system_info();
+        return;
+    }
     char pathGif[16];
     char pathBin[16];
     snprintf(pathGif, sizeof(pathGif), "/slot%d.gif", slot);
@@ -192,7 +208,7 @@ void display_open_slot(uint8_t slot) {
             s_next_frame_ms = millis();
             return;
         } else {
-            Serial.printf("[DISPLAY] Failed to decode GIF: %s\n", pathGif);
+            Serial.printf("[DISPLAY] Failed to decode GIF: %s (Error code: %d)\n", pathGif, s_gif.getLastError());
         }
     } else if (LittleFS.exists(pathBin)) {
         File f = LittleFS.open(pathBin, "r");
@@ -227,8 +243,15 @@ void display_update_playback(void) {
             s_gif.reset();
             s_next_frame_ms = now;
         } else {
+            // Файл поврежден: удаляем его из флешки, чтобы не крашить систему!
+            Serial.printf("[DISPLAY] Corrupted GIF in slot %d! Auto-removing.\n", s_current_slot);
             s_gif.close();
             s_is_gif_open = false;
+
+            char badPath[16];
+            snprintf(badPath, sizeof(badPath), "/slot%d.gif", s_current_slot);
+            LittleFS.remove(badPath);
+
             display_show_placeholder(s_current_slot);
         }
     }
@@ -288,12 +311,43 @@ void display_show_qr(QrViewMode mode) {
     display_set_backlight(BACKLIGHT_DUTY_PORTAL);
 
     if (mode == QR_MODE_WIFI) {
-        // QR №1: Подключение к Wi-Fi сети
-        const char *wifiPayload = "WIFI:S:" AP_SSID ";T:WPA;P:" AP_PASS ";;";
+        // T:WPA ОБЯЗАТЕЛЬНО идет первым для Android/iOS:
+        const char *wifiPayload = "WIFI:T:WPA;S:" AP_SSID ";P:" AP_PASS ";;";
         render_qr_canvas(wifiPayload, "1. CONNECT WI-FI", AP_SSID, "CLICK: OPEN SITE QR");
     } else {
         // QR №2: Прямая ссылка для открытия в Safari/Chrome
         const char *urlPayload = "http://" AP_IP_STR "/";
         render_qr_canvas(urlPayload, "2. OPEN BROWSER", AP_IP_STR, "CLICK: WI-FI QR");
     }
+}
+void display_show_system_info(void) {
+    s_tft.fillScreen(TFT_BLACK);
+    s_tft.drawCircle(120, 120, 115, TFT_DARKGREY);
+    s_tft.drawCircle(120, 120, 113, TFT_CYAN);
+
+    s_tft.setTextDatum(TC_DATUM);
+    s_tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    s_tft.drawString("SYSTEM INFO", 120, 20, 2);
+
+    // Заряд батареи
+    uint16_t mv = battery_get_mv();
+    uint8_t  pct = battery_get_percentage();
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d%%", pct);
+    s_tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    s_tft.drawString(buf, 120, 50, 4);
+
+    snprintf(buf, sizeof(buf), "VOLTAGE: %d.%02dV", mv / 1000, (mv % 1000) / 10);
+    s_tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    s_tft.drawString(buf, 120, 85, 2);
+
+    // Шпаргалка по управлению кнопкой
+    s_tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    s_tft.drawString("CONTROLS:", 120, 115, 2);
+
+    s_tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    s_tft.drawString("1x CLICK : NEXT SLOT", 120, 140, 1);
+    s_tft.drawString("2x CLICK : BRIGHTNESS", 120, 155, 1);
+    s_tft.drawString("HOLD 3s  : WI-FI PORTAL", 120, 170, 1);
+    s_tft.drawString("HOLD 5s  : POWER OFF", 120, 185, 1);
 }
