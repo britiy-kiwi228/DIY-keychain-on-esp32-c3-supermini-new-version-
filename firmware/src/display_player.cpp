@@ -8,6 +8,7 @@
 #include <AnimatedGIF.h>
 #include <qrcode.h>
 #include <driver/ledc.h>
+#define PIN_LCD_BLK 2
 
 // Internal display & GIF decoder instances
 static TFT_eSPI    s_tft = TFT_eSPI();
@@ -20,6 +21,7 @@ static uint16_t s_lineBuffer[240];
 static bool     s_is_gif_open = false;
 static uint32_t s_next_frame_ms = 0;
 static uint8_t  s_current_slot = 1;
+static uint8_t s_current_brightness_duty = BACKLIGHT_DUTY_PLAYBACK;
 
 // ============================================================================
 // ANIMATEDGIF LITTLEFS FILE CALLBACKS
@@ -47,14 +49,17 @@ static void GIF_close(void *pHandle) {
 static int32_t GIF_read(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) {
     File *f = (File*)pFile->fHandle;
     if (!f || !(*f)) return 0;
-    return f->read(pBuf, iLen);
+    int32_t bytesRead = f->read(pBuf, iLen);
+    pFile->iPos += bytesRead; // ОБЯЗАТЕЛЬНО обновляем смещение!
+    return bytesRead;
 }
 
 static int32_t GIF_seek(GIFFILE *pFile, int32_t iPosition) {
     File *f = (File*)pFile->fHandle;
     if (!f || !(*f)) return 0;
     f->seek(iPosition, SeekSet);
-    return f->position();
+    pFile->iPos = (int32_t)f->position(); // ОБЯЗАТЕЛЬНО синхронизируем позицию!
+    return pFile->iPos;
 }
 
 /**
@@ -115,24 +120,26 @@ static void GIF_draw(GIFDRAW *pDraw) {
 // HARDWARE INITIALIZATION & POWER MANAGEMENT
 // ============================================================================
 
-void display_init(void) {
-    // 1. Initialize Backlight PWM (LEDC)
-    ledcSetup(BACKLIGHT_LEDC_CH, BACKLIGHT_LEDC_FREQ, BACKLIGHT_LEDC_RES);
-    ledcAttachPin(TFT_BLK, BACKLIGHT_LEDC_CH);
-    display_set_backlight(BACKLIGHT_DUTY_OFF);
+void display_set_backlight(uint8_t duty) {
+    s_current_brightness_duty = duty;
+    ledcWrite(BACKLIGHT_LEDC_CH, duty);
+}
 
-    // 2. Initialize GC9A01 SPI Display
+void display_init(void) {
+    // 1. Сначала запускаем контроллер GC9A01
     s_tft.init();
     s_tft.setRotation(0);
     s_tft.fillScreen(TFT_BLACK);
-    // ВОТ ОНА: ВКЛЮЧАЕМ ДЕКОДЕР GIF! (Без этого был вечный вылет)
+
+    // 2. И только ПОСЛЕ этого перехватываем GPIO 2 под аппаратный ШИМ
+    ledcSetup(BACKLIGHT_LEDC_CH, BACKLIGHT_LEDC_FREQ, BACKLIGHT_LEDC_RES);
+    ledcAttachPin(PIN_LCD_BLK, BACKLIGHT_LEDC_CH);
+    display_set_backlight(BACKLIGHT_DUTY_PLAYBACK);
+
+    // 3. Запуск декодера GIF
     s_gif.begin(BIG_ENDIAN_PIXELS);
 
     display_wake();
-}
-
-void display_set_backlight(uint8_t duty) {
-    ledcWrite(BACKLIGHT_LEDC_CH, duty);
 }
 
 void display_sleep(void) {
@@ -235,24 +242,40 @@ void display_update_playback(void) {
     uint32_t now = millis();
     if (now >= s_next_frame_ms) {
         int frame_delay_ms = 0;
-        int res = s_gif.playFrame(true, &frame_delay_ms);
+        // Передаем false, чтобы библиотека не блокировала процессор через delay()
+        int res = s_gif.playFrame(false, &frame_delay_ms);
 
         if (res == 1) {
-            s_next_frame_ms = now + frame_delay_ms;
+            // Кадр успешно отрисован, ждем указанную задержку (минимум 30 мс)
+            s_next_frame_ms = now + (frame_delay_ms > 0 ? frame_delay_ms : 100);
         } else if (res == 0) {
+            // Достигнут конец гифки (последний кадр) — перезапускаем анимацию по кругу!
             s_gif.reset();
-            s_next_frame_ms = now;
+            s_next_frame_ms = now + (frame_delay_ms > 0 ? frame_delay_ms : 100);
         } else {
-            // Файл поврежден: удаляем его из флешки, чтобы не крашить систему!
-            Serial.printf("[DISPLAY] Corrupted GIF in slot %d! Auto-removing.\n", s_current_slot);
-            s_gif.close();
-            s_is_gif_open = false;
+            // Произошла реальная ошибка декодирования
+            int err = s_gif.getLastError();
+            Serial.printf("[DISPLAY] PlayFrame returned %d, LastError: %d in slot %d\n", res, err, s_current_slot);
 
-            char badPath[16];
-            snprintf(badPath, sizeof(badPath), "/slot%d.gif", s_current_slot);
-            LittleFS.remove(badPath);
+            // Если ошибка не критическая, пробуем сбросить на начало вместо удаления
+            static uint8_t s_error_count = 0;
+            s_error_count++;
 
-            display_show_placeholder(s_current_slot);
+            if (s_error_count < 3) {
+                s_gif.reset();
+                s_next_frame_ms = now + 100;
+            } else {
+                s_error_count = 0;
+                Serial.printf("[DISPLAY] Unrecoverable GIF error. Removing /slot%d.gif\n", s_current_slot);
+                s_gif.close();
+                s_is_gif_open = false;
+
+                char badPath[16];
+                snprintf(badPath, sizeof(badPath), "/slot%d.gif", s_current_slot);
+                LittleFS.remove(badPath);
+
+                display_show_placeholder(s_current_slot);
+            }
         }
     }
 }
@@ -327,27 +350,33 @@ void display_show_system_info(void) {
 
     s_tft.setTextDatum(TC_DATUM);
     s_tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    s_tft.drawString("SYSTEM INFO", 120, 20, 2);
+    s_tft.drawString("SYSTEM INFO", 120, 18, 2);
 
-    // Заряд батареи
+    // 1. Процент заряда
     uint16_t mv = battery_get_mv();
     uint8_t  pct = battery_get_percentage();
     char buf[32];
     snprintf(buf, sizeof(buf), "%d%%", pct);
     s_tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    s_tft.drawString(buf, 120, 50, 4);
+    s_tft.drawString(buf, 120, 42, 4);
 
     snprintf(buf, sizeof(buf), "VOLTAGE: %d.%02dV", mv / 1000, (mv % 1000) / 10);
     s_tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    s_tft.drawString(buf, 120, 85, 2);
+    s_tft.drawString(buf, 120, 75, 2);
 
-    // Шпаргалка по управлению кнопкой
+    // 2. Текущая яркость экрана (ВЫВОДИМ СЮДА)
+    uint8_t bright_pct = (s_current_brightness_duty * 100) / 255;
+    snprintf(buf, sizeof(buf), "BRIGHTNESS: %d%%", bright_pct);
     s_tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    s_tft.drawString("CONTROLS:", 120, 115, 2);
+    s_tft.drawString(buf, 120, 98, 2);
+
+    // 3. Подсказка по управлению кнопкой
+    s_tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    s_tft.drawString("CONTROLS:", 120, 124, 2);
 
     s_tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    s_tft.drawString("1x CLICK : NEXT SLOT", 120, 140, 1);
-    s_tft.drawString("2x CLICK : BRIGHTNESS", 120, 155, 1);
-    s_tft.drawString("HOLD 3s  : WI-FI PORTAL", 120, 170, 1);
-    s_tft.drawString("HOLD 5s  : POWER OFF", 120, 185, 1);
+    s_tft.drawString("1x CLICK : NEXT SLOT", 120, 145, 1);
+    s_tft.drawString("2x CLICK : BRIGHTNESS", 120, 160, 1);
+    s_tft.drawString("HOLD 3s  : WI-FI PORTAL", 120, 175, 1);
+    s_tft.drawString("HOLD 5s  : POWER OFF", 120, 190, 1);
 }
